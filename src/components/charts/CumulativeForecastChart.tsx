@@ -1,0 +1,344 @@
+import { format } from 'date-fns'
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ReferenceArea,
+  ReferenceDot,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import { parseDateOnlyIso } from '../../lib/dateUtils'
+
+type Row = {
+  dateIso: string
+  actualCumulative: number | null
+  baselineCumulative: number | null
+  optimisticCumulative: number | null
+  conservativeCumulative: number | null
+  isForecast: boolean
+}
+
+function formatCompact(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`
+  return `${Math.round(n)}`
+}
+
+export function CumulativeForecastChart(props: {
+  title: string
+  subtitle?: string
+  data: Row[]
+  todayIso: string
+  monthEndIso: string
+  latestActualBubble?: {
+    dateIso: string
+    mtd: number
+    prevMonthMtd: number | null
+    mtdVsPrevMonthPct: number | null
+  }
+}) {
+  const todayX = props.todayIso
+  const monthEndX = props.monthEndIso
+  const bubble = props.latestActualBubble
+  const bubbleY =
+    bubble?.dateIso === todayX
+      ? props.data.find((r) => r.dateIso === todayX)?.actualCumulative ?? null
+      : null
+
+  const bubbleDeltaText =
+    bubble?.mtdVsPrevMonthPct === null || bubble?.mtdVsPrevMonthPct === undefined
+      ? null
+      : `${bubble.mtdVsPrevMonthPct >= 0 ? '+' : ''}${bubble.mtdVsPrevMonthPct.toFixed(1)}% vs last month MTD`
+
+  return (
+    <div className="w-full">
+      <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-slate-900">{props.title}</div>
+          {props.subtitle ? <div className="text-xs text-slate-500">{props.subtitle}</div> : null}
+        </div>
+        <div className="text-xs text-slate-500">
+          Forecast scenarios: <span className="font-medium text-slate-700">baseline</span> ±5%
+        </div>
+      </div>
+
+      <div className="mt-4 h-[360px] w-full min-w-0">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart
+            key={`${props.todayIso}_${props.monthEndIso}_${props.data.length}`}
+            data={props.data}
+            // Extra right margin keeps month-end labels visible.
+            margin={{ top: 10, right: 110, left: 0, bottom: 8 }}
+          >
+            <CartesianGrid vertical={false} stroke="#eef2f7" />
+
+            <ReferenceArea
+              x1={todayX}
+              x2={monthEndX}
+              fill="#e2e8f0"
+              fillOpacity={0.35}
+              ifOverflow="extendDomain"
+            />
+
+            <ReferenceLine x={todayX} stroke="#94a3b8" strokeDasharray="4 4" />
+
+            {bubble && bubbleY !== null ? (
+              <ReferenceDot
+                x={bubble.dateIso}
+                y={bubbleY}
+                r={5}
+                fill="#0f172a"
+                stroke="#ffffff"
+                strokeWidth={2}
+                label={({ viewBox }) => {
+                  if (!viewBox) return null
+                  const x = (viewBox as { x: number }).x
+                  const y = (viewBox as { y: number }).y
+
+                  const valueText = `${bubble.mtd.toLocaleString()} txns`
+                  const deltaText = bubbleDeltaText ?? ''
+
+                  const w = Math.max(170, valueText.length * 8 + 28)
+                  const h = deltaText ? 46 : 30
+
+                  return (
+                    <g transform={`translate(${x - w - 12}, ${y - h - 10})`}>
+                      <line
+                        x1={w}
+                        y1={h / 2}
+                        x2={w + 12}
+                        y2={h + 10}
+                        stroke="#cbd5e1"
+                        strokeWidth={1.5}
+                      />
+                      <rect
+                        x={0}
+                        y={0}
+                        width={w}
+                        height={h}
+                        rx={14}
+                        fill="#ffffff"
+                        stroke="#e2e8f0"
+                      />
+                      <text x={14} y={19} fontSize={12} fontWeight={700} fill="#0f172a">
+                        {valueText}
+                      </text>
+                      {deltaText ? (
+                        <text
+                          x={14}
+                          y={36}
+                          fontSize={11}
+                          fontWeight={600}
+                          fill={bubble.mtdVsPrevMonthPct !== null && bubble.mtdVsPrevMonthPct >= 0 ? '#16a34a' : '#f97316'}
+                        >
+                          {deltaText}
+                        </text>
+                      ) : null}
+                    </g>
+                  )
+                }}
+              />
+            ) : null}
+
+            {(() => {
+              const end = props.data.find((r) => r.dateIso === monthEndX)
+              if (!end) return null
+              const items: Array<{
+                key: string
+                y: number | null
+                label: string
+                stroke: string
+              }> = [
+                {
+                  key: 'end_baseline',
+                  y: end.baselineCumulative ?? null,
+                  label:
+                    end.baselineCumulative === null
+                      ? ''
+                      : `Baseline: ${Math.round(end.baselineCumulative).toLocaleString()}`,
+                  stroke: '#2563eb',
+                },
+                {
+                  key: 'end_optimistic',
+                  y: end.optimisticCumulative ?? null,
+                  label:
+                    end.optimisticCumulative === null
+                      ? ''
+                      : `Optimistic: ${Math.round(end.optimisticCumulative).toLocaleString()}`,
+                  stroke: '#16a34a',
+                },
+                {
+                  key: 'end_conservative',
+                  y: end.conservativeCumulative ?? null,
+                  label:
+                    end.conservativeCumulative === null
+                      ? ''
+                      : `Conservative: ${Math.round(end.conservativeCumulative).toLocaleString()}`,
+                  stroke: '#f97316',
+                },
+              ]
+
+              const present = items.filter((it) => it.y !== null) as Array<
+                Omit<(typeof items)[number], 'y'> & { y: number }
+              >
+              const sorted = [...present].sort((a, b) => b.y - a.y)
+              const offsets = new Map<string, number>()
+              const baseOffsets = [-16, 0, 16]
+              for (let i = 0; i < sorted.length; i++) offsets.set(sorted[i].key, baseOffsets[i] ?? 0)
+
+              return items
+                .filter((it) => it.y !== null)
+                .map((it) => (
+                  <ReferenceDot
+                    key={it.key}
+                    x={monthEndX}
+                    y={it.y as number}
+                    r={3.5}
+                    fill={it.stroke}
+                    stroke="#ffffff"
+                    strokeWidth={1.5}
+                    label={({ viewBox }) => {
+                      if (!viewBox) return null
+                      const x = (viewBox as { x: number }).x
+                      const y = (viewBox as { y: number }).y
+                      const text = it.label
+                      const dy = offsets.get(it.key) ?? 0
+                      return (
+                        <text
+                          x={x + 10}
+                          y={y + dy}
+                          textAnchor="start"
+                          fontSize={11}
+                          fontWeight={800}
+                          fill={it.stroke}
+                          stroke="#ffffff"
+                          strokeWidth={3}
+                          paintOrder="stroke"
+                        >
+                          {text}
+                        </text>
+                      )
+                    }}
+                  />
+                ))
+            })()}
+
+            <XAxis
+              dataKey="dateIso"
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: 11, fill: '#64748b' }}
+              minTickGap={24}
+              angle={-35}
+              textAnchor="end"
+              height={52}
+              tickFormatter={(iso: string) => format(parseDateOnlyIso(iso), 'yyyy-MM-dd')}
+              padding={{ right: 36 }}
+            />
+
+            <YAxis
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: 11, fill: '#64748b' }}
+              width={48}
+              tickFormatter={(v: number) => formatCompact(v)}
+            />
+
+            <Tooltip
+              contentStyle={{
+                borderRadius: 14,
+                border: '1px solid #e2e8f0',
+                boxShadow: '0 8px 20px rgba(15, 23, 42, 0.08)',
+              }}
+              labelFormatter={(label) =>
+                typeof label === 'string' ? format(parseDateOnlyIso(label), 'EEE, MMM d') : ''
+              }
+              formatter={(value: unknown, name) => {
+                const n = typeof name === 'string' ? name : ''
+                if (typeof value !== 'number') return [value as string, name]
+                return [Math.round(value).toLocaleString(), n]
+              }}
+            />
+
+            <Legend
+              verticalAlign="top"
+              align="right"
+              iconType="plainline"
+              wrapperStyle={{ paddingBottom: 8 }}
+              formatter={(value) => (
+                <span style={{ color: '#334155', fontSize: 12, fontWeight: 600 }}>{value}</span>
+              )}
+            />
+
+            <Line
+              type="monotone"
+              dataKey="actualCumulative"
+              name="Actual"
+              stroke="#0f172a"
+              strokeWidth={2.5}
+              dot={false}
+              connectNulls={false}
+              isAnimationActive={true}
+              animationDuration={650}
+              animationEasing="ease-out"
+            />
+
+            <Line
+              type="monotone"
+              dataKey="baselineCumulative"
+              name="Baseline"
+              stroke="#2563eb"
+              strokeWidth={2}
+              dot={false}
+              connectNulls={true}
+              strokeDasharray="6 4"
+              isAnimationActive={true}
+              animationDuration={650}
+              animationEasing="ease-out"
+            />
+
+            <Line
+              type="monotone"
+              dataKey="optimisticCumulative"
+              name="Optimistic"
+              stroke="#16a34a"
+              strokeWidth={1.8}
+              dot={false}
+              connectNulls={true}
+              strokeDasharray="4 4"
+              isAnimationActive={true}
+              animationDuration={650}
+              animationEasing="ease-out"
+            />
+
+            <Line
+              type="monotone"
+              dataKey="conservativeCumulative"
+              name="Conservative"
+              stroke="#f97316"
+              strokeWidth={1.8}
+              dot={false}
+              connectNulls={true}
+              strokeDasharray="4 4"
+              isAnimationActive={true}
+              animationDuration={650}
+              animationEasing="ease-out"
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="mt-2 text-[11px] text-slate-500">
+        Shaded region indicates the forecast window (tomorrow through month-end). The baseline uses
+        observed weekday/weekend/bank-holiday run rates and is adjusted by learned intra-month
+        seasonality from historical data (dummy for now).
+      </div>
+    </div>
+  )
+}
+
