@@ -102,9 +102,10 @@ export function CumulativeForecastChart(props: {
 
                   const valueText = `${bubble.mtd.toLocaleString()} txns`
                   const deltaText = bubbleDeltaText ?? ''
+                  const asOfText = `As of ${format(parseDateOnlyIso(bubble.dateIso), 'MMM d')}`
 
                   const w = Math.max(170, valueText.length * 8 + 28)
-                  const h = deltaText ? 46 : 30
+                  const h = deltaText ? 60 : 46
 
                   return (
                     <g transform={`translate(${x - w - 12}, ${y - h - 10})`}>
@@ -128,10 +129,13 @@ export function CumulativeForecastChart(props: {
                       <text x={14} y={19} fontSize={12} fontWeight={700} fill="#0f172a">
                         {valueText}
                       </text>
+                      <text x={14} y={35} fontSize={11} fontWeight={600} fill="#64748b">
+                        {asOfText}
+                      </text>
                       {deltaText ? (
                         <text
                           x={14}
-                          y={36}
+                          y={52}
                           fontSize={11}
                           fontWeight={600}
                           fill={bubble.mtdVsPrevMonthPct !== null && bubble.mtdVsPrevMonthPct >= 0 ? '#16a34a' : '#f97316'}

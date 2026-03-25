@@ -8,6 +8,7 @@ import { CumulativeForecastChart } from './components/charts/CumulativeForecastC
 import { DailyRunRateChart } from './components/charts/DailyRunRateChart'
 import { SeasonalityChart } from './components/charts/SeasonalityChart'
 import { buildDashboardModel } from './lib/dashboardModel'
+import { parseDateOnlyIso } from './lib/dateUtils'
 import { importClientStatusCsv } from './lib/import/clientStatusCsv'
 import { importPivotCsv } from './lib/import/pivotCsv'
 import type { TxnDataset } from './lib/types'
@@ -281,7 +282,10 @@ function App() {
               <div className="text-sm font-semibold text-slate-900">Monthly transactions</div>
               <div className="text-xs text-slate-500">
                 Cumulative actuals vs forecast scenarios. Current state as of{' '}
-                <span className="font-medium text-slate-700">{format(today, 'MMM d, yyyy')}</span>.
+                <span className="font-medium text-slate-700">
+                  {format(parseDateOnlyIso(model.todayIso), 'MMM d, yyyy')}
+                </span>
+                .
               </div>
             </div>
           </div>
