@@ -1,6 +1,7 @@
 export type Client = {
   id: string
   name: string
+  status?: 'existing' | 'new'
 }
 
 export type DailyClientTxn = {

@@ -1,5 +1,5 @@
 import { endOfMonth, format, parseISO } from 'date-fns'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { ClientScopeSwitch } from './components/ClientScopeSwitch'
 import { KpiCard } from './components/KpiCard'
@@ -8,29 +8,51 @@ import { CumulativeForecastChart } from './components/charts/CumulativeForecastC
 import { DailyRunRateChart } from './components/charts/DailyRunRateChart'
 import { SeasonalityChart } from './components/charts/SeasonalityChart'
 import { buildDashboardModel } from './lib/dashboardModel'
-import { makeDummyDataset } from './lib/dummyData'
+import { importClientStatusCsv } from './lib/import/clientStatusCsv'
 import { importPivotCsv } from './lib/import/pivotCsv'
 import type { TxnDataset } from './lib/types'
-import datasetJson from './data/txnDataset.json'
+import datasetJson from './data/txnDataset.sample.json'
+import tokenLogo from './assets/token.png'
+import { DailyClientCalendarTable } from './components/DailyClientCalendarTable'
+
+function normalizeClientName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function stripTrailingParenCode(name: string): string {
+  return name.replace(/\s*\([^)]*\)\s*$/g, '').trim()
+}
 
 function App() {
   const today = new Date()
 
   const [scope, setScope] = useState<'company' | 'client'>('company')
   const [selectedClientId, setSelectedClientId] = useState<string>('all')
+  const [clientStatus, setClientStatus] = useState<'all' | 'existing' | 'new'>('all')
   const [monthEnd, setMonthEnd] = useState<Date>(endOfMonth(today))
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [didAutoRefresh, setDidAutoRefresh] = useState(false)
 
   const [dataset, setDataset] = useState<TxnDataset>(() => {
-    const maybe = datasetJson as unknown as TxnDataset
-    if (maybe?.clients?.length && (maybe.daily?.length || maybe.historicalDaily?.length)) return maybe
-    return makeDummyDataset()
+    const fromFile = datasetJson as unknown as TxnDataset
+    if (fromFile?.clients?.length && (fromFile.daily?.length || fromFile.historicalDaily?.length)) return fromFile
+
+    try {
+      const raw = localStorage.getItem('txnDashboard.dataset.v1')
+      if (raw) {
+        const parsed = JSON.parse(raw) as TxnDataset
+        if (parsed?.clients?.length && (parsed.daily?.length || parsed.historicalDaily?.length)) return parsed
+      }
+    } catch {
+      // ignore
+    }
+
+    return { clients: [], daily: [], historicalDaily: [], bankHolidayDates: [] }
   })
 
   const model = useMemo(() => {
-    const clientId =
-      scope === 'company' ? 'all' : selectedClientId === 'all' ? 'c_acme' : selectedClientId
+    const clientId = scope === 'company' ? 'all' : selectedClientId
 
     return buildDashboardModel({
       dataset,
@@ -38,14 +60,51 @@ function App() {
       monthEnd,
       clientId,
       bankHolidayDates: dataset.bankHolidayDates,
+      clientStatusFilter: clientStatus,
     })
-  }, [dataset, monthEnd, scope, selectedClientId, today])
+  }, [dataset, monthEnd, scope, selectedClientId, today, clientStatus])
+
+  const filteredClients = useMemo(() => {
+    const hasAnyStatus = dataset.clients.some((c) => c.status === 'existing' || c.status === 'new')
+    return clientStatus === 'all' || !hasAnyStatus
+      ? dataset.clients
+      : dataset.clients.filter((c) => c.status === clientStatus)
+  }, [dataset.clients, clientStatus])
+
+  const visibleClientsForTable = useMemo(() => {
+    if (scope === 'client') {
+      const c = dataset.clients.find((x) => x.id === selectedClientId)
+      return c ? [c] : []
+    }
+    return filteredClients
+  }, [dataset.clients, filteredClients, scope, selectedClientId])
 
   const clientOptions = useMemo(() => {
-    const opts = [{ value: 'all', label: 'All clients' }]
-    for (const c of dataset.clients) opts.push({ value: c.id, label: c.name })
+    if (scope !== 'client') return [{ value: 'all', label: 'All clients' }]
+    const opts: { value: string; label: string }[] = []
+    for (const c of filteredClients) opts.push({ value: c.id, label: c.name })
     return opts
-  }, [dataset.clients])
+  }, [filteredClients, scope])
+
+  useEffect(() => {
+    if (scope !== 'client') return
+    const allowedIds = new Set(filteredClients.map((c) => c.id))
+    if (allowedIds.size === 0) return
+    if (!allowedIds.has(selectedClientId)) {
+      setSelectedClientId(filteredClients[0]!.id)
+    }
+  }, [filteredClients, scope, selectedClientId])
+
+  useEffect(() => {
+    if (scope !== 'client') {
+      // Keep "all" as the stored value for company view.
+      setSelectedClientId('all')
+      return
+    }
+    if (filteredClients.length > 0 && selectedClientId === 'all') {
+      setSelectedClientId(filteredClients[0]!.id)
+    }
+  }, [filteredClients, scope, selectedClientId])
 
   const monthOptions = useMemo(() => {
     const all = dataset.historicalDaily ? [...dataset.historicalDaily, ...dataset.daily] : dataset.daily
@@ -72,20 +131,46 @@ function App() {
       setIsRefreshing(true)
       setRefreshError(null)
       const sheetId = '1G4FWwoNB_IKkc061AeyD1VvfP7_vx0T6CzNikGDg00c'
-      const gid = '0'
-      const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${encodeURIComponent(
-        gid,
+      const gidData = '0'
+      const gidStatus = '411537134'
+      const urlData = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${encodeURIComponent(
+        gidData,
+      )}`
+      const urlStatus = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${encodeURIComponent(
+        gidStatus,
       )}`
 
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(`Failed to fetch (${res.status})`)
-      const csv = await res.text()
-      const { dataset: imported, warnings } = importPivotCsv(csv)
-      setDataset(imported)
+      const [resData, resStatus] = await Promise.all([fetch(urlData), fetch(urlStatus)])
+      if (!resData.ok) throw new Error(`Failed to fetch data tab (${resData.status})`)
+      if (!resStatus.ok) throw new Error(`Failed to fetch status tab (${resStatus.status})`)
+
+      const [csvData, csvStatus] = await Promise.all([resData.text(), resStatus.text()])
+      const { dataset: imported, warnings: w1 } = importPivotCsv(csvData)
+      const { byClientName, warnings: w2 } = importClientStatusCsv(csvStatus)
+
+      const clientsWithStatus = imported.clients.map((c) => ({
+        ...c,
+        status:
+          byClientName.get(normalizeClientName(c.name)) ??
+          byClientName.get(normalizeClientName(stripTrailingParenCode(c.name))) ??
+          c.status,
+      }))
+
+      const merged: TxnDataset = { ...imported, clients: clientsWithStatus }
+      setDataset(merged)
+      try {
+        localStorage.setItem('txnDashboard.dataset.v1', JSON.stringify(merged))
+      } catch {
+        // ignore
+      }
+      // If statuses exist, default to "All" so the user can narrow after refresh.
+      // Also ensures we don't accidentally stay on a status that would filter everything.
+      setClientStatus('all')
       // Default the month selector to the latest month in the refreshed data.
-      const all = imported.historicalDaily ? [...imported.historicalDaily, ...imported.daily] : imported.daily
+      const all = merged.historicalDaily ? [...merged.historicalDaily, ...merged.daily] : merged.daily
       const latestIso = all.map((r) => r.dateIso).sort().at(-1) ?? null
       if (latestIso) setMonthEnd(endOfMonth(parseISO(latestIso + 'T00:00:00')))
+      const warnings = [...w1, ...w2]
       if (warnings.length) console.warn('Import warnings:', warnings)
     } catch (e) {
       setRefreshError(e instanceof Error ? e.message : 'Refresh failed')
@@ -94,13 +179,27 @@ function App() {
     }
   }
 
+  const hasRealData = dataset.clients.length > 0 && (dataset.daily.length > 0 || (dataset.historicalDaily?.length ?? 0) > 0)
+
+  useEffect(() => {
+    // Auto-refresh on first open so users don't see dummy/empty data.
+    if (didAutoRefresh) return
+    setDidAutoRefresh(true)
+    if (!hasRealData) void refreshFromGoogleSheets()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [didAutoRefresh])
+
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/80 backdrop-blur">
         <div className="mx-auto max-w-6xl px-6 py-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-xl bg-slate-900" />
+              <img
+                src={tokenLogo}
+                alt="Token"
+                className="h-9 w-9 rounded-xl border border-slate-200 bg-white object-cover"
+              />
               <div>
                 <div className="text-sm font-semibold text-slate-900">
                   Transaction Analytics
@@ -122,6 +221,19 @@ function App() {
               </div>
 
               <ClientScopeSwitch value={scope} onChange={setScope} />
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-slate-500">Client status</span>
+                <Select
+                  value={clientStatus}
+                  options={[
+                    { value: 'all', label: 'All' },
+                    { value: 'existing', label: 'Existing clients' },
+                    { value: 'new', label: 'New clients' },
+                  ]}
+                  onChange={(v) => setClientStatus(v as 'all' | 'existing' | 'new')}
+                />
+              </div>
 
               <div className={clsx('flex items-center gap-2', scope !== 'client' && 'opacity-50')}>
                 <span className="text-xs font-medium text-slate-500">Client</span>
@@ -155,6 +267,14 @@ function App() {
 
       <main className="mx-auto max-w-6xl px-6 py-6">
         <div className="card p-6">
+          {!hasRealData ? (
+            <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Loading data…</div>
+              <div className="mt-1 text-xs text-slate-500">
+                Fetching the latest data from Google Sheets. If it takes too long, try <span className="font-semibold">Refresh data</span>.
+              </div>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
               <div className="text-sm font-semibold text-slate-900">Monthly transactions</div>
@@ -310,6 +430,18 @@ function App() {
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="soft-divider my-6" />
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <DailyClientCalendarTable
+              title="Daily transactions by client"
+              subtitle="Calendar-day transaction counts for the selected month (respects Client status and Per client / Company view)."
+              monthEnd={monthEnd}
+              clients={visibleClientsForTable}
+              rows={dataset.historicalDaily ? [...dataset.historicalDaily, ...dataset.daily] : dataset.daily}
+            />
           </div>
         </div>
       </main>

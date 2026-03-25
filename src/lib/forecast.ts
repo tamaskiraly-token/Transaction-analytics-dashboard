@@ -264,14 +264,16 @@ export function aggregateDailyTotals(params: {
   rows: DailyClientTxn[]
   clientId: string
   monthEnd: Date
+  allowedClientIds?: Set<string>
 }): Map<string, number> {
-  const { rows, clientId, monthEnd } = params
+  const { rows, clientId, monthEnd, allowedClientIds } = params
   const monthStart = startOfMonth(monthEnd)
   const monthEndClamped = endOfMonth(monthEnd)
   const totals = new Map<string, number>()
 
   for (const r of rows) {
     if (clientId !== 'all' && r.clientId !== clientId) continue
+    if (clientId === 'all' && allowedClientIds && !allowedClientIds.has(r.clientId)) continue
     const d = parseDateOnlyIso(r.dateIso)
     if (d < monthStart || d > monthEndClamped) continue
     totals.set(r.dateIso, (totals.get(r.dateIso) ?? 0) + r.txns)

@@ -10,8 +10,10 @@ export function buildDashboardModel(params: {
   monthEnd: Date
   clientId: string // 'all' means company
   bankHolidayDates: string[]
+  clientStatusFilter?: 'all' | 'existing' | 'new'
 }) {
   const { dataset, today, monthEnd, clientId, bankHolidayDates } = params
+  const clientStatusFilter = params.clientStatusFilter ?? 'all'
 
   const monthEndD = endOfMonth(monthEnd)
   const monthStartD = startOfMonth(monthEndD)
@@ -23,10 +25,18 @@ export function buildDashboardModel(params: {
   const bankHolidaySet = new Set(bankHolidayDates)
   const allRows = dataset.historicalDaily ? [...dataset.historicalDaily, ...dataset.daily] : dataset.daily
 
+  const allowedClientIdsRaw =
+    clientStatusFilter === 'all'
+      ? undefined
+      : new Set(dataset.clients.filter((c) => c.status === clientStatusFilter).map((c) => c.id))
+  const allowedClientIds =
+    allowedClientIdsRaw && allowedClientIdsRaw.size > 0 ? allowedClientIdsRaw : undefined
+
   const dailyTotals = aggregateDailyTotals({
     rows: allRows,
     clientId,
     monthEnd: monthEndD,
+    allowedClientIds,
   })
 
   const { runRates, countsSoFar } = computeRunRates({
@@ -61,6 +71,7 @@ export function buildDashboardModel(params: {
           rows: dataset.historicalDaily,
           clientId,
           monthEnd: prevMonthEnd,
+          allowedClientIds,
         })
         return Array.from(prevTotals.entries())
           .filter(([iso]) => iso <= prevMonthCutoffIso)
