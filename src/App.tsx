@@ -14,8 +14,8 @@ import { importPivotCsv } from './lib/import/pivotCsv'
 import type { TxnDataset } from './lib/types'
 import datasetJson from './data/txnDataset.sample.json'
 import tokenLogo from './assets/token.png'
-import { DailyClientCalendarTable } from './components/DailyClientCalendarTable'
 import { ProjectionBreakdownTable } from './components/ProjectionBreakdownTable'
+import { ClientOutlierFlagTable } from './components/ClientOutlierFlagTable'
 
 function normalizeClientName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, ' ')
@@ -449,12 +449,14 @@ function App() {
           <div className="soft-divider my-6" />
 
           <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <DailyClientCalendarTable
-              title="Daily transactions by client"
-              subtitle="Calendar-day transaction counts for the selected month (respects Client status and Per client / Company view)."
+            <ClientOutlierFlagTable
+              title="Client outlier flags (daily)"
+              subtitle="Red/green cells highlight days that materially deviate from the client’s recent trend (both negative drops and positive spikes). Hover a cell for details."
               monthEnd={monthEnd}
+              asOfIso={model.todayIso}
               clients={visibleClientsForTable}
               rows={dataset.historicalDaily ? [...dataset.historicalDaily, ...dataset.daily] : dataset.daily}
+              bankHolidayDates={dataset.bankHolidayDates ?? []}
             />
           </div>
         </div>
