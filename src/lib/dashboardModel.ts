@@ -1,5 +1,5 @@
 import { endOfMonth, format, isSameMonth, startOfMonth, subMonths } from 'date-fns'
-import { clampToDayRange, toDateOnlyIso } from './dateUtils'
+import { clampToDayRange, parseDateOnlyIso, toDateOnlyIso } from './dateUtils'
 import { aggregateDailyTotals, buildForecastSeries, buildProjectionBreakdown, computeRemainingCounts, computeRunRates, forecastMonthEndTotals } from './forecast'
 import { buildSeasonalityProfile } from './seasonality'
 import type { TxnDataset } from './types'
@@ -17,8 +17,9 @@ export function buildDashboardModel(params: {
 
   const monthEndD = endOfMonth(monthEnd)
   const monthStartD = startOfMonth(monthEndD)
-  const effectiveToday = clampToDayRange(today, monthStartD, monthEndD)
-  const todayIso = toDateOnlyIso(effectiveToday)
+  // We anchor "today" to the latest available actual data point (not the wall-clock day),
+  // otherwise missing days would be treated as 0 actuals and push the forecast start too far.
+  const clampedToday = clampToDayRange(today, monthStartD, monthEndD)
   const monthEndIso = toDateOnlyIso(monthEndD)
   const showScenarios = isSameMonth(monthEndD, today)
 
@@ -38,6 +39,14 @@ export function buildDashboardModel(params: {
     monthEnd: monthEndD,
     allowedClientIds,
   })
+
+  const lastActualIsoInMonth =
+    dailyTotals.size > 0 ? Array.from(dailyTotals.keys()).sort().at(-1) ?? null : null
+  const effectiveToday =
+    lastActualIsoInMonth && lastActualIsoInMonth <= toDateOnlyIso(clampedToday)
+      ? parseDateOnlyIso(lastActualIsoInMonth)
+      : clampedToday
+  const todayIso = toDateOnlyIso(effectiveToday)
 
   const { runRates, countsSoFar } = computeRunRates({
     dailyTotals,
