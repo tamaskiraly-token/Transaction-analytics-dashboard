@@ -14,6 +14,7 @@ import type { TxnDataset } from './lib/types'
 import datasetJson from './data/txnDataset.sample.json'
 import tokenLogo from './assets/token.png'
 import { DailyClientCalendarTable } from './components/DailyClientCalendarTable'
+import { ProjectionBreakdownTable } from './components/ProjectionBreakdownTable'
 
 function normalizeClientName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, ' ')
@@ -323,6 +324,14 @@ function App() {
           />
 
           <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+            <ProjectionBreakdownTable
+              title="Projection breakdown (per day)"
+              subtitle="Shows the inputs used for the forecast allocation across the remaining calendar days."
+              rows={model.projectionBreakdown.rows}
+            />
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
             <DailyRunRateChart
               title="Daily run rate"
               subtitle="Observed daily transactions and month-to-date average"
@@ -399,15 +408,15 @@ function App() {
                   Formula (allocation over remaining days)
                 </div>
                 <div className="mt-2 font-mono text-[12px] leading-5 text-slate-700">
-                  w(d) = runRate(dayType(d)) × seasonality(dom(d))
+                  w(d) = runRate(dayType(d)) × seasonality(daysToMonthEnd(d))
                   <br />
                   RemainingTotal = ForecastMonthEnd − ActualMTD
                   <br />
                   Forecast(d) = RemainingTotal × w(d) / Σ w(k) for all remaining days k
                 </div>
                 <div className="mt-2 text-[11px] text-slate-500">
-                  Where <span className="font-semibold">seasonality(dom)</span> is the learned day-of-month multiplier
-                  (mean normalized to 1.00×).
+                  Where <span className="font-semibold">daysToMonthEnd(d)</span> is 0 for the last day of the month, 1
+                  for the day before, etc. Seasonality multipliers are mean normalized to 1.00×.
                 </div>
               </div>
             </div>
@@ -417,8 +426,9 @@ function App() {
                 <div className="rounded-2xl border border-slate-200 bg-white p-4">
                   <SeasonalityChart
                     title="Observed intra-month seasonality (historical)"
-                    subtitle="Day-of-month multiplier learned from historical totals"
-                    dayOfMonthMultiplier={model.seasonality.dayOfMonthMultiplier}
+                    subtitle="Learned by distance-to-month-end (0 = last day)"
+                    mode="daysToMonthEnd"
+                    daysToMonthEndMultiplier={model.seasonality.daysToMonthEndMultiplier}
                   />
                 </div>
               ) : (

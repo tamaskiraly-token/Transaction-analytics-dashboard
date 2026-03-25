@@ -13,10 +13,15 @@ type Row = { day: number; multiplier: number }
 export function SeasonalityChart(props: {
   title: string
   subtitle?: string
-  dayOfMonthMultiplier: number[]
+  mode?: 'dayOfMonth' | 'daysToMonthEnd'
+  dayOfMonthMultiplier?: number[]
+  daysToMonthEndMultiplier?: number[]
 }) {
-  const data: Row[] = props.dayOfMonthMultiplier.map((m, i) => ({
-    day: i + 1,
+  const mode = props.mode ?? 'daysToMonthEnd'
+  const series =
+    mode === 'dayOfMonth' ? props.dayOfMonthMultiplier ?? [] : props.daysToMonthEndMultiplier ?? []
+  const data: Row[] = series.map((m, i) => ({
+    day: mode === 'dayOfMonth' ? i + 1 : i,
     multiplier: m,
   }))
 
@@ -77,8 +82,11 @@ export function SeasonalityChart(props: {
       </div>
 
       <div className="mt-2 text-[11px] text-slate-500">
-        This curve is learned from historical data by averaging each day-of-month’s share of monthly volume, then
-        normalizing so the mean multiplier is 1.00×.
+        This curve is learned from historical data by averaging each day’s share of monthly volume, aligned by{' '}
+        <span className="font-semibold">
+          {mode === 'dayOfMonth' ? 'day-of-month' : 'distance-to-month-end'}
+        </span>
+        , then normalizing so the mean multiplier is 1.00×.
       </div>
     </div>
   )

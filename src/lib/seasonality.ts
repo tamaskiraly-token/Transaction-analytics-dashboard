@@ -1,4 +1,4 @@
-import { endOfMonth, format, parseISO } from 'date-fns'
+import { differenceInCalendarDays, endOfMonth, format, parseISO } from 'date-fns'
 import { parseDateOnlyIso } from './dateUtils'
 import type { DailyClientTxn } from './types'
 
@@ -8,6 +8,11 @@ export type SeasonalityProfile = {
    * Values are normalized such that the average is ~1.0 across the month.
    */
   dayOfMonthMultiplier: number[]
+  /**
+   * Multipliers by distance-to-month-end (0 = last day, 1 = second last day, ...).
+   * Normalized such that average is ~1.0.
+   */
+  daysToMonthEndMultiplier: number[]
 }
 
 function normalizeToMean1(xs: number[]): number[] {
@@ -34,6 +39,7 @@ export function buildSeasonalityProfile(history: DailyClientTxn[]): SeasonalityP
   }
 
   const multipliersByDom: number[] = []
+  const multipliersByDaysToEnd: number[] = []
   let monthsUsed = 0
 
   for (const [, rows] of byMonth) {
@@ -49,6 +55,8 @@ export function buildSeasonalityProfile(history: DailyClientTxn[]): SeasonalityP
 
     const domTotals = new Array(dim).fill(0)
     const domCounts = new Array(dim).fill(0)
+    const dteTotals = new Array(dim).fill(0) // days-to-end (0..dim-1)
+    const dteCounts = new Array(dim).fill(0)
 
     for (const [iso, v] of dailyTotals) {
       const d = parseDateOnlyIso(iso)
@@ -56,6 +64,11 @@ export function buildSeasonalityProfile(history: DailyClientTxn[]): SeasonalityP
       if (dom >= 1 && dom <= dim) {
         domTotals[dom - 1] += v
         domCounts[dom - 1] += 1
+      }
+      const daysToEnd = differenceInCalendarDays(end, d)
+      if (daysToEnd >= 0 && daysToEnd < dim) {
+        dteTotals[daysToEnd] += v
+        dteCounts[daysToEnd] += 1
       }
     }
 
@@ -65,16 +78,29 @@ export function buildSeasonalityProfile(history: DailyClientTxn[]): SeasonalityP
       Number.isFinite(x) ? x : 1,
     )
 
+    // Compute per-days-to-end average, normalize by month mean.
+    const dteAvg = dteTotals.map((t, i) => (dteCounts[i] ? t / dteCounts[i] : 0))
+    const dteAvgNorm = normalizeToMean1(dteAvg.map((x) => (x === 0 ? NaN : x))).map((x) =>
+      Number.isFinite(x) ? x : 1,
+    )
+
     // Accumulate into global profile (variable month lengths handled by overlap).
     for (let i = 0; i < domAvgNorm.length; i++) {
       multipliersByDom[i] = (multipliersByDom[i] ?? 0) + domAvgNorm[i]
+    }
+    for (let i = 0; i < dteAvgNorm.length; i++) {
+      multipliersByDaysToEnd[i] = (multipliersByDaysToEnd[i] ?? 0) + dteAvgNorm[i]
     }
     monthsUsed += 1
   }
 
   if (!monthsUsed) return null
   const avg = multipliersByDom.map((x) => x / monthsUsed)
-  return { dayOfMonthMultiplier: normalizeToMean1(avg) }
+  const avgDte = multipliersByDaysToEnd.map((x) => x / monthsUsed)
+  return {
+    dayOfMonthMultiplier: normalizeToMean1(avg),
+    daysToMonthEndMultiplier: normalizeToMean1(avgDte),
+  }
 }
 
 export function seasonalityMultiplierForDom(
@@ -83,6 +109,15 @@ export function seasonalityMultiplierForDom(
 ): number {
   if (!profile) return 1
   const v = profile.dayOfMonthMultiplier[dayOfMonth - 1]
+  return Number.isFinite(v) && v > 0 ? v : 1
+}
+
+export function seasonalityMultiplierForDaysToEnd(
+  profile: SeasonalityProfile | null,
+  daysToEnd: number,
+): number {
+  if (!profile) return 1
+  const v = profile.daysToMonthEndMultiplier[daysToEnd]
   return Number.isFinite(v) && v > 0 ? v : 1
 }
 

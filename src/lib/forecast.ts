@@ -1,6 +1,6 @@
-import { addDays, endOfMonth, format, startOfMonth } from 'date-fns'
+import { addDays, differenceInCalendarDays, endOfMonth, startOfMonth } from 'date-fns'
 import { clampToDayRange, dayTypeFor, parseDateOnlyIso, toDateOnlyIso } from './dateUtils'
-import { seasonalityMultiplierForDom, type SeasonalityProfile } from './seasonality'
+import { seasonalityMultiplierForDaysToEnd, type SeasonalityProfile } from './seasonality'
 import type { DayType, DailyClientTxn } from './types'
 
 export type RunRates = {
@@ -31,6 +31,27 @@ export type ForecastPoint = {
   optimisticCumulative: number | null
   conservativeCumulative: number | null
   isForecast: boolean
+}
+
+export type ProjectionBreakdownRow = {
+  dateIso: string
+  dayType: DayType
+  runRateUsed: number
+  seasonalityMultiplier: number
+  weight: number
+  weightPct: number
+  baselineTxns: number
+  optimisticTxns: number
+  conservativeTxns: number
+}
+
+export type ProjectionBreakdown = {
+  rows: ProjectionBreakdownRow[]
+  totals: {
+    baselineRemaining: number
+    optimisticRemaining: number
+    conservativeRemaining: number
+  }
 }
 
 function safeAvg(sum: number, n: number) {
@@ -127,6 +148,88 @@ function expectedForDay(dayType: DayType, runRates: RunRates) {
   return runRates.weekday
 }
 
+export function buildProjectionBreakdown(params: {
+  today: Date
+  monthEnd: Date
+  bankHolidaySet: Set<string>
+  runRates: RunRates
+  seasonality: SeasonalityProfile | null
+  actualMtd: number
+  totals: ForecastTotals
+}): ProjectionBreakdown {
+  const { today, monthEnd, bankHolidaySet, runRates, seasonality, actualMtd, totals } = params
+  const monthStart = startOfMonth(monthEnd)
+  const clampedToday = clampToDayRange(today, monthStart, monthEnd)
+
+  const remainingIsos: string[] = []
+  const dayTypes: DayType[] = []
+  const runRateUsed: number[] = []
+  const seasonals: number[] = []
+  const weights: number[] = []
+
+  for (let d = addDays(clampedToday, 1); d <= monthEnd; d = addDays(d, 1)) {
+    const iso = toDateOnlyIso(d)
+    const t = dayTypeFor(d, bankHolidaySet)
+    const rr = expectedForDay(t, runRates)
+    const dte = differenceInCalendarDays(monthEnd, d)
+    const s = seasonalityMultiplierForDaysToEnd(seasonality, dte)
+    const w = Math.max(0, rr * s)
+
+    remainingIsos.push(iso)
+    dayTypes.push(t)
+    runRateUsed.push(rr)
+    seasonals.push(s)
+    weights.push(w)
+  }
+
+  const wSum = weights.reduce((a, b) => a + b, 0)
+
+  function allocate(targetTotal: number) {
+    const remainingTarget = Math.max(0, targetTotal - actualMtd)
+    const alloc = new Map<string, number>()
+    if (remainingIsos.length === 0) return { alloc, remainingTarget }
+    if (wSum <= 0) {
+      const perDay = remainingTarget / remainingIsos.length
+      for (const iso of remainingIsos) alloc.set(iso, perDay)
+      return { alloc, remainingTarget }
+    }
+    for (let i = 0; i < remainingIsos.length; i++) {
+      alloc.set(remainingIsos[i], (weights[i] / wSum) * remainingTarget)
+    }
+    return { alloc, remainingTarget }
+  }
+
+  const base = allocate(totals.baselineTotal)
+  const opt = allocate(totals.optimisticTotal)
+  const con = allocate(totals.conservativeTotal)
+
+  const rows: ProjectionBreakdownRow[] = []
+  for (let i = 0; i < remainingIsos.length; i++) {
+    const iso = remainingIsos[i]
+    const w = weights[i]
+    rows.push({
+      dateIso: iso,
+      dayType: dayTypes[i]!,
+      runRateUsed: runRateUsed[i]!,
+      seasonalityMultiplier: seasonals[i]!,
+      weight: w,
+      weightPct: wSum > 0 ? (w / wSum) * 100 : remainingIsos.length ? 100 / remainingIsos.length : 0,
+      baselineTxns: base.alloc.get(iso) ?? 0,
+      optimisticTxns: opt.alloc.get(iso) ?? 0,
+      conservativeTxns: con.alloc.get(iso) ?? 0,
+    })
+  }
+
+  return {
+    rows,
+    totals: {
+      baselineRemaining: base.remainingTarget,
+      optimisticRemaining: opt.remainingTarget,
+      conservativeRemaining: con.remainingTarget,
+    },
+  }
+}
+
 /**
  * Builds a full month time series of cumulative actuals and forecast scenarios.
  * Forecast allocation across remaining days is adjusted by an intra-month seasonality profile if provided.
@@ -184,9 +287,9 @@ export function buildForecastSeries(params: {
     remainingIsos.push(iso)
 
     const t = dayTypeFor(d, bankHolidaySet)
-    const dom = Number(format(d, 'd'))
     const base = expectedForDay(t, runRates)
-    const seasonal = seasonalityMultiplierForDom(seasonality, dom)
+    const dte = differenceInCalendarDays(monthEnd, d)
+    const seasonal = seasonalityMultiplierForDaysToEnd(seasonality, dte)
     weights.push(Math.max(0, base * seasonal))
   }
 

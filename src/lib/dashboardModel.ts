@@ -1,6 +1,6 @@
 import { endOfMonth, format, isSameMonth, startOfMonth, subMonths } from 'date-fns'
 import { clampToDayRange, toDateOnlyIso } from './dateUtils'
-import { aggregateDailyTotals, buildForecastSeries, computeRemainingCounts, computeRunRates, forecastMonthEndTotals } from './forecast'
+import { aggregateDailyTotals, buildForecastSeries, buildProjectionBreakdown, computeRemainingCounts, computeRunRates, forecastMonthEndTotals } from './forecast'
 import { buildSeasonalityProfile } from './seasonality'
 import type { TxnDataset } from './types'
 
@@ -88,6 +88,18 @@ export function buildDashboardModel(params: {
       )
     : null
 
+  const projectionBreakdown = showScenarios
+    ? buildProjectionBreakdown({
+        today: effectiveToday,
+        monthEnd: monthEndD,
+        bankHolidaySet,
+        runRates,
+        seasonality,
+        actualMtd,
+        totals,
+      })
+    : { rows: [], totals: { baselineRemaining: 0, optimisticRemaining: 0, conservativeRemaining: 0 } }
+
   const chart = buildForecastSeries({
     dailyTotals,
     today: effectiveToday,
@@ -110,6 +122,7 @@ export function buildDashboardModel(params: {
     clientLabel,
     chart,
     showScenarios,
+    projectionBreakdown,
     latestActualBubble: {
       dateIso: todayIso,
       mtd: Math.round(actualMtd),
@@ -119,6 +132,7 @@ export function buildDashboardModel(params: {
     seasonality: seasonality
       ? {
           dayOfMonthMultiplier: seasonality.dayOfMonthMultiplier,
+          daysToMonthEndMultiplier: seasonality.daysToMonthEndMultiplier,
         }
       : null,
     runRates,
