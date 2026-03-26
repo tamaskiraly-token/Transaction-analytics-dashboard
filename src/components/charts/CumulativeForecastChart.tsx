@@ -41,6 +41,11 @@ export function CumulativeForecastChart(props: {
     prevMonthMtd: number | null
     mtdVsPrevMonthPct: number | null
   }
+  scenarioVsLastMonthPct?: {
+    baseline: number | null
+    optimistic: number | null
+    conservative: number | null
+  }
 }) {
   const todayX = props.todayIso
   const monthEndX = props.monthEndIso
@@ -73,7 +78,7 @@ export function CumulativeForecastChart(props: {
             key={`${props.todayIso}_${props.monthEndIso}_${props.data.length}`}
             data={props.data}
             // Extra right margin keeps month-end labels visible.
-            margin={{ top: 10, right: 110, left: 0, bottom: 8 }}
+            margin={{ top: 10, right: 170, left: 0, bottom: 8 }}
           >
             <CartesianGrid vertical={false} stroke="#eef2f7" />
 
@@ -164,7 +169,12 @@ export function CumulativeForecastChart(props: {
                   label:
                     end.baselineCumulative === null
                       ? ''
-                      : `Baseline: ${Math.round(end.baselineCumulative).toLocaleString()}`,
+                      : `Baseline: ${Math.round(end.baselineCumulative).toLocaleString()}${
+                          props.scenarioVsLastMonthPct?.baseline !== null &&
+                          props.scenarioVsLastMonthPct?.baseline !== undefined
+                            ? ` (${props.scenarioVsLastMonthPct.baseline >= 0 ? '+' : ''}${props.scenarioVsLastMonthPct.baseline.toFixed(1)}% vs LM)`
+                            : ''
+                        }`,
                   stroke: '#2563eb',
                 },
                 {
@@ -173,7 +183,12 @@ export function CumulativeForecastChart(props: {
                   label:
                     end.optimisticCumulative === null
                       ? ''
-                      : `Optimistic: ${Math.round(end.optimisticCumulative).toLocaleString()}`,
+                      : `Optimistic: ${Math.round(end.optimisticCumulative).toLocaleString()}${
+                          props.scenarioVsLastMonthPct?.optimistic !== null &&
+                          props.scenarioVsLastMonthPct?.optimistic !== undefined
+                            ? ` (${props.scenarioVsLastMonthPct.optimistic >= 0 ? '+' : ''}${props.scenarioVsLastMonthPct.optimistic.toFixed(1)}% vs LM)`
+                            : ''
+                        }`,
                   stroke: '#16a34a',
                 },
                 {
@@ -182,7 +197,12 @@ export function CumulativeForecastChart(props: {
                   label:
                     end.conservativeCumulative === null
                       ? ''
-                      : `Conservative: ${Math.round(end.conservativeCumulative).toLocaleString()}`,
+                      : `Conservative: ${Math.round(end.conservativeCumulative).toLocaleString()}${
+                          props.scenarioVsLastMonthPct?.conservative !== null &&
+                          props.scenarioVsLastMonthPct?.conservative !== undefined
+                            ? ` (${props.scenarioVsLastMonthPct.conservative >= 0 ? '+' : ''}${props.scenarioVsLastMonthPct.conservative.toFixed(1)}% vs LM)`
+                            : ''
+                        }`,
                   stroke: '#f97316',
                 },
               ]
@@ -192,7 +212,8 @@ export function CumulativeForecastChart(props: {
               >
               const sorted = [...present].sort((a, b) => b.y - a.y)
               const offsets = new Map<string, number>()
-              const baseOffsets = [-16, 0, 16]
+              // Keep labels close to endpoints and below legend area.
+              const baseOffsets = [4, 10, 16]
               for (let i = 0; i < sorted.length; i++) offsets.set(sorted[i].key, baseOffsets[i] ?? 0)
 
               return items
@@ -212,9 +233,12 @@ export function CumulativeForecastChart(props: {
                       const y = (viewBox as { y: number }).y
                       const text = it.label
                       const dy = offsets.get(it.key) ?? 0
+                      const splitIdx = text.indexOf(' (')
+                      const main = splitIdx >= 0 ? text.slice(0, splitIdx) : text
+                      const pct = splitIdx >= 0 ? text.slice(splitIdx + 2, text.length - 1) : null
                       return (
                         <text
-                          x={x + 10}
+                          x={x + 8}
                           y={y + dy}
                           textAnchor="start"
                           fontSize={11}
@@ -224,7 +248,12 @@ export function CumulativeForecastChart(props: {
                           strokeWidth={3}
                           paintOrder="stroke"
                         >
-                          {text}
+                          <tspan>{main}</tspan>
+                          {pct ? (
+                            <tspan dx="6" fontSize={10} fontWeight={800} opacity={0.95}>
+                              {pct}
+                            </tspan>
+                          ) : null}
                         </text>
                       )
                     }}
@@ -242,7 +271,7 @@ export function CumulativeForecastChart(props: {
               textAnchor="end"
               height={52}
               tickFormatter={(iso: string) => format(parseDateOnlyIso(iso), 'yyyy-MM-dd')}
-              padding={{ right: 36 }}
+              padding={{ right: 60 }}
             />
 
             <YAxis
@@ -251,6 +280,8 @@ export function CumulativeForecastChart(props: {
               tick={{ fontSize: 11, fill: '#64748b' }}
               width={48}
               tickFormatter={(v: number) => formatCompact(v)}
+              // Add some headroom so month-end labels don't collide with the legend.
+              domain={[0, (dataMax: number) => (Number.isFinite(dataMax) ? dataMax * 1.12 : 'auto')]}
             />
 
             <Tooltip

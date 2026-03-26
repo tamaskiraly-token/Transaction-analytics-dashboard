@@ -325,6 +325,7 @@ function App() {
             todayIso={model.todayIso}
             monthEndIso={model.monthEndIso}
             latestActualBubble={model.latestActualBubble}
+            scenarioVsLastMonthPct={model.scenarioVsLastMonthPct}
           />
 
           <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">

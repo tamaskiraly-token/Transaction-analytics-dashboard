@@ -88,8 +88,26 @@ export function buildDashboardModel(params: {
       })()
     : null
 
+  const prevMonthTotal = dataset.historicalDaily
+    ? (() => {
+        const prevTotals = aggregateDailyTotals({
+          rows: dataset.historicalDaily,
+          clientId,
+          monthEnd: prevMonthEnd,
+          allowedClientIds,
+        })
+        return Array.from(prevTotals.values()).reduce((acc, v) => acc + v, 0)
+      })()
+    : null
+
   const mtdVsPrevMonthPct =
     prevMonthMtd && prevMonthMtd > 0 ? ((actualMtd - prevMonthMtd) / prevMonthMtd) * 100 : null
+  const baselineVsPrevMonthPct =
+    prevMonthTotal && prevMonthTotal > 0 ? ((totals.baselineTotal - prevMonthTotal) / prevMonthTotal) * 100 : null
+  const optimisticVsPrevMonthPct =
+    prevMonthTotal && prevMonthTotal > 0 ? ((totals.optimisticTotal - prevMonthTotal) / prevMonthTotal) * 100 : null
+  const conservativeVsPrevMonthPct =
+    prevMonthTotal && prevMonthTotal > 0 ? ((totals.conservativeTotal - prevMonthTotal) / prevMonthTotal) * 100 : null
 
   const seasonality = dataset.historicalDaily
     ? buildSeasonalityProfile(
@@ -132,6 +150,11 @@ export function buildDashboardModel(params: {
     chart,
     showScenarios,
     projectionBreakdown,
+    scenarioVsLastMonthPct: {
+      baseline: baselineVsPrevMonthPct,
+      optimistic: optimisticVsPrevMonthPct,
+      conservative: conservativeVsPrevMonthPct,
+    },
     latestActualBubble: {
       dateIso: todayIso,
       mtd: Math.round(actualMtd),
