@@ -34,10 +34,7 @@ export function ProjectionBreakdownTable(props: {
                 Run rate used
               </th>
               <th className="w-[160px] border-b border-slate-200 px-4 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                Seasonality
-              </th>
-              <th className="w-[120px] border-b border-slate-200 px-4 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                Weight %
+                Seasonality (effective)
               </th>
               <th className="w-[140px] border-b border-slate-200 px-4 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 Baseline
@@ -70,7 +67,6 @@ export function ProjectionBreakdownTable(props: {
                 <td className="px-4 py-2 text-right tabular-nums text-slate-700">
                   {r.seasonalityMultiplier.toFixed(3)}×
                 </td>
-                <td className="px-4 py-2 text-right tabular-nums text-slate-700">{r.weightPct.toFixed(1)}%</td>
                 <td className="px-4 py-2 text-right tabular-nums font-semibold text-slate-900">
                   {fmtInt(r.baselineTxns)}
                 </td>
@@ -85,7 +81,7 @@ export function ProjectionBreakdownTable(props: {
 
             {props.rows.length === 0 ? (
               <tr>
-                <td className="px-4 py-6 text-sm text-slate-500" colSpan={8}>
+                <td className="px-4 py-6 text-sm text-slate-500" colSpan={7}>
                   No projection rows (either not in current month, or there are no remaining days in the month).
                 </td>
               </tr>

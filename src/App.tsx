@@ -4,13 +4,18 @@ import clsx from 'clsx'
 import { ClientScopeSwitch } from './components/ClientScopeSwitch'
 import { KpiCard } from './components/KpiCard'
 import { Select } from './components/Select'
+import { ViewModeSwitch } from './components/ViewModeSwitch'
+import { RunRateOverlaySwitch } from './components/RunRateOverlaySwitch'
 import { CumulativeForecastChart } from './components/charts/CumulativeForecastChart'
 import { DailyRunRateChart } from './components/charts/DailyRunRateChart'
 import { SeasonalityChart } from './components/charts/SeasonalityChart'
+import { YearForecastChart } from './components/charts/YearForecastChart'
+import { YearAvgRunRateChart } from './components/charts/YearAvgRunRateChart'
 import { buildDashboardModel } from './lib/dashboardModel'
 import { parseDateOnlyIso } from './lib/dateUtils'
 import { importClientStatusCsv } from './lib/import/clientStatusCsv'
 import { importPivotCsv } from './lib/import/pivotCsv'
+import { buildYearForecastModel } from './lib/yearForecast'
 import type { TxnDataset } from './lib/types'
 import datasetJson from './data/txnDataset.sample.json'
 import tokenLogo from './assets/token.png'
@@ -28,6 +33,8 @@ function stripTrailingParenCode(name: string): string {
 function App() {
   const today = new Date()
 
+  const [viewMode, setViewMode] = useState<'month' | 'year'>('month')
+  const [showRunRateOverlay, setShowRunRateOverlay] = useState<boolean>(false)
   const [scope, setScope] = useState<'company' | 'client'>('company')
   const [selectedClientId, setSelectedClientId] = useState<string>('all')
   const [clientStatus, setClientStatus] = useState<'all' | 'existing' | 'new'>('all')
@@ -65,6 +72,26 @@ function App() {
       clientStatusFilter: clientStatus,
     })
   }, [dataset, monthEnd, scope, selectedClientId, today, clientStatus])
+
+  const yearModel = useMemo(() => {
+    const clientId = scope === 'company' ? 'all' : selectedClientId
+    const hasAnyStatus = dataset.clients.some((c) => c.status === 'existing' || c.status === 'new')
+    const allowedClientIdsRaw =
+      clientStatus === 'all' || !hasAnyStatus
+        ? undefined
+        : new Set(dataset.clients.filter((c) => c.status === clientStatus).map((c) => c.id))
+    const allowedClientIds = allowedClientIdsRaw && allowedClientIdsRaw.size > 0 ? allowedClientIdsRaw : undefined
+
+    const year = monthEnd.getFullYear()
+    return buildYearForecastModel({
+      dataset,
+      today,
+      year,
+      clientId,
+      allowedClientIds,
+      bankHolidayDates: dataset.bankHolidayDates ?? [],
+    })
+  }, [clientStatus, dataset, monthEnd, scope, selectedClientId, today])
 
   const filteredClients = useMemo(() => {
     const hasAnyStatus = dataset.clients.some((c) => c.status === 'existing' || c.status === 'new')
@@ -288,178 +315,321 @@ function App() {
                 .
               </div>
             </div>
+            <ViewModeSwitch value={viewMode} onChange={setViewMode} />
           </div>
 
           <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-            <KpiCard
-              title="Month-to-date"
-              value={model.kpis.mtdTotal}
-              subtitle="Actual transactions"
-              deltaLabel="vs baseline month-end"
-              deltaValue={model.kpis.mtdVsBaselinePct}
-            />
-            <KpiCard
-              title="Baseline forecast"
-              value={model.kpis.baselineTotal}
-              subtitle="Expected month-end total"
-              deltaLabel="optimistic / conservative"
-              deltaValue={`${model.kpis.optimisticTotal.toLocaleString()} / ${model.kpis.conservativeTotal.toLocaleString()}`}
-              deltaIsText
-            />
-            <KpiCard
-              title="Run rates observed"
-              value={`${Math.round(model.runRates.weekday).toLocaleString()} / ${Math.round(model.runRates.weekend).toLocaleString()}`}
-              subtitle="Weekday / weekend avg"
-              deltaLabel="bank holiday avg"
-              deltaValue={Math.round(model.runRates.holiday).toLocaleString()}
-              deltaIsText
-            />
+            {viewMode === 'month' ? (
+              <>
+                <KpiCard
+                  title="Month-to-date"
+                  value={model.kpis.mtdTotal}
+                  subtitle="Actual transactions"
+                  deltaLabel="vs baseline month-end"
+                  deltaValue={model.kpis.mtdVsBaselinePct}
+                />
+                <KpiCard
+                  title="Baseline forecast"
+                  value={model.kpis.baselineTotal}
+                  subtitle="Expected month-end total"
+                  deltaLabel="optimistic / conservative"
+                  deltaValue={`${model.kpis.optimisticTotal.toLocaleString()} / ${model.kpis.conservativeTotal.toLocaleString()}`}
+                  deltaIsText
+                />
+                <KpiCard
+                  title="Run rates observed"
+                  value={`${Math.round(model.runRates.weekday).toLocaleString()} / ${Math.round(model.runRates.weekend).toLocaleString()}`}
+                  subtitle="Weekday / weekend avg"
+                  deltaLabel="bank holiday avg"
+                  deltaValue={Math.round(model.runRates.holiday).toLocaleString()}
+                  deltaIsText
+                />
+              </>
+            ) : (
+              <>
+                <KpiCard
+                  title="Year-to-date"
+                  value={yearModel.totals.ytdActual}
+                  subtitle="Actual transactions"
+                />
+                <KpiCard
+                  title="Baseline year-end"
+                  value={yearModel.totals.baselineYearEnd ?? ''}
+                  subtitle="Projected total through Dec"
+                  deltaLabel="optimistic / conservative"
+                  deltaValue={`${(yearModel.totals.optimisticYearEnd ?? 0).toLocaleString()} / ${(yearModel.totals.conservativeYearEnd ?? 0).toLocaleString()}`}
+                  deltaIsText
+                />
+                <KpiCard
+                  title="Trend growth (MoM)"
+                  value={`${yearModel.assumptions.monthlyRunRateGrowthPct.weekday >= 0 ? '+' : ''}${yearModel.assumptions.monthlyRunRateGrowthPct.weekday.toFixed(1)}%`}
+                  subtitle="Weekday run-rate growth"
+                  deltaLabel="weekend growth"
+                  deltaValue={`${yearModel.assumptions.monthlyRunRateGrowthPct.weekend >= 0 ? '+' : ''}${yearModel.assumptions.monthlyRunRateGrowthPct.weekend.toFixed(1)}%`}
+                  deltaIsText
+                />
+              </>
+            )}
           </div>
 
           <div className="soft-divider my-6" />
 
-          <CumulativeForecastChart
-            title="Cumulative progression"
-            subtitle={scope === 'company' ? 'Company total' : model.clientLabel}
-            data={model.chart}
-            todayIso={model.todayIso}
-            monthEndIso={model.monthEndIso}
-            latestActualBubble={model.latestActualBubble}
-            scenarioVsLastMonthPct={model.scenarioVsLastMonthPct}
-          />
-
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-            <ProjectionBreakdownTable
-              title="Projection breakdown (per day)"
-              subtitle="Shows the inputs used for the forecast allocation across the remaining calendar days."
-              rows={model.projectionBreakdown.rows}
-            />
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-            <DailyRunRateChart
-              title="Daily run rate"
-              subtitle="Observed daily transactions and month-to-date average"
-              data={model.chart}
-            />
-          </div>
-
-          <div className="mt-4 flex justify-end">
-            <div className="w-full max-w-md">
-              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                <table className="w-full table-fixed">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="px-4 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        Day type
-                      </th>
-                      <th className="px-4 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        So far
-                      </th>
-                      <th className="px-4 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        Left
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="text-sm">
-                    <tr className="border-t border-slate-100">
-                      <td className="px-4 py-2 text-slate-700">Weekdays</td>
-                      <td className="px-4 py-2 text-right font-semibold text-slate-900">
-                        {model.classificationCounts.weekdaysSoFar}
-                      </td>
-                      <td className="px-4 py-2 text-right font-semibold text-slate-900">
-                        {model.classificationCounts.weekdaysRemaining}
-                      </td>
-                    </tr>
-                    <tr className="border-t border-slate-100">
-                      <td className="px-4 py-2 text-slate-700">Weekends</td>
-                      <td className="px-4 py-2 text-right font-semibold text-slate-900">
-                        {model.classificationCounts.weekendsSoFar}
-                      </td>
-                      <td className="px-4 py-2 text-right font-semibold text-slate-900">
-                        {model.classificationCounts.weekendsRemaining}
-                      </td>
-                    </tr>
-                    <tr className="border-t border-slate-100">
-                      <td className="px-4 py-2 text-slate-700">Bank holidays</td>
-                      <td className="px-4 py-2 text-right font-semibold text-slate-900">
-                        {model.classificationCounts.holidaysSoFar}
-                      </td>
-                      <td className="px-4 py-2 text-right font-semibold text-slate-900">
-                        {model.classificationCounts.holidaysRemaining}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+          {viewMode === 'month' ? (
+            <div>
+              <div className="flex items-center justify-end">
+                <RunRateOverlaySwitch
+                  value={showRunRateOverlay}
+                  onChange={setShowRunRateOverlay}
+                  label="Run-rate bars"
+                />
               </div>
-              <div className="mt-1 text-right text-[11px] text-slate-500">
-                “Left” counts only cover the forecast window (tomorrow → month-end).
+              <div className="mt-2">
+                <CumulativeForecastChart
+                  title="Cumulative progression"
+                  subtitle={scope === 'company' ? 'Company total' : model.clientLabel}
+                  data={model.chart}
+                  todayIso={model.todayIso}
+                  monthEndIso={model.monthEndIso}
+                  latestActualBubble={model.latestActualBubble}
+                  scenarioVsLastMonthPct={model.scenarioVsLastMonthPct}
+                  showRunRateBars={showRunRateOverlay}
+                />
               </div>
             </div>
-          </div>
-
-          <div className="soft-divider my-6" />
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
-            <div className="md:col-span-2">
-              <div className="text-sm font-semibold text-slate-900">Seasonality adjustment</div>
-              <div className="mt-1 text-xs text-slate-500">
-                We use historical intra-month patterns (e.g. month-end uplift) to shape how the remaining forecast is
-                distributed across the remaining days.
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center justify-end">
+                <RunRateOverlaySwitch
+                  value={showRunRateOverlay}
+                  onChange={setShowRunRateOverlay}
+                  label="Run-rate bars"
+                />
               </div>
+              <YearForecastChart
+                title="Year-to-date and year-end projection"
+                subtitle="Monthly totals (actuals + projection through Dec) using average run rates by day type from recent months."
+                year={yearModel.year}
+                months={yearModel.months}
+                asOf={yearModel.asOf}
+                projectionStart={yearModel.projectionStart}
+                showRunRateBars={showRunRateOverlay}
+              />
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                Trend-fit over last {yearModel.assumptions.lookbackMonths} completed months. As-of run rates:{' '}
+                <span className="font-semibold text-slate-800">
+                  {Math.round(yearModel.assumptions.runRatesAtAsOf.weekday).toLocaleString()}
+                </span>{' '}
+                weekday /{' '}
+                <span className="font-semibold text-slate-800">
+                  {Math.round(yearModel.assumptions.runRatesAtAsOf.weekend).toLocaleString()}
+                </span>{' '}
+                weekend /{' '}
+                <span className="font-semibold text-slate-800">
+                  {Math.round(yearModel.assumptions.runRatesAtAsOf.holiday).toLocaleString()}
+                </span>{' '}
+                holiday. MoM growth:{' '}
+                <span className="font-semibold text-slate-800">
+                  {yearModel.assumptions.monthlyRunRateGrowthPct.weekday >= 0 ? '+' : ''}
+                  {yearModel.assumptions.monthlyRunRateGrowthPct.weekday.toFixed(1)}%
+                </span>{' '}
+                wk /{' '}
+                <span className="font-semibold text-slate-800">
+                  {yearModel.assumptions.monthlyRunRateGrowthPct.weekend >= 0 ? '+' : ''}
+                  {yearModel.assumptions.monthlyRunRateGrowthPct.weekend.toFixed(1)}%
+                </span>{' '}
+                we.
+              </div>
+            </div>
+          )}
 
-              <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Formula (allocation over remaining days)
-                </div>
-                <div className="mt-2 font-mono text-[12px] leading-5 text-slate-700">
-                  w(d) = runRate(dayType(d)) × seasonality(daysToMonthEnd(d))
-                  <br />
-                  RemainingTotal = ForecastMonthEnd − ActualMTD
-                  <br />
-                  Forecast(d) = RemainingTotal × w(d) / Σ w(k) for all remaining days k
-                </div>
-                <div className="mt-2 text-[11px] text-slate-500">
-                  Where <span className="font-semibold">daysToMonthEnd(d)</span> is 0 for the last day of the month, 1
-                  for the day before, etc. Seasonality multipliers are mean normalized to 1.00×.
+          {viewMode === 'month' ? (
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+              <ProjectionBreakdownTable
+                title="Projection breakdown (per day)"
+                subtitle="Shows the inputs used for the forecast allocation across the remaining calendar days."
+                rows={model.projectionBreakdown.rows}
+              />
+            </div>
+          ) : null}
+
+          {viewMode === 'month' ? (
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+              <DailyRunRateChart
+                title="Daily run rate"
+                subtitle="Observed daily transactions and month-to-date average"
+                data={model.chart}
+              />
+            </div>
+          ) : (
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-5">
+              <div className="md:col-span-3 rounded-2xl border border-slate-200 bg-white p-4">
+                <YearAvgRunRateChart
+                  title="Average daily run rate (MoM)"
+                  subtitle="Monthly average transactions per day (actuals for completed months; scenarios for forecast months)."
+                  months={yearModel.months}
+                />
+              </div>
+              <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-900">Month composition (calendar)</div>
+                <div className="mt-1 text-xs text-slate-500">Weekdays / weekends / bank holidays per month.</div>
+                <div className="mt-3 overflow-auto rounded-2xl border border-slate-200 bg-white">
+                  <table className="min-w-[520px] table-fixed text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Month
+                        </th>
+                        <th className="px-4 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Weekdays
+                        </th>
+                        <th className="px-4 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Weekends
+                        </th>
+                        <th className="px-4 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Holidays
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {yearModel.months.map((m) => (
+                        <tr key={m.monthKey} className="border-t border-slate-100">
+                          <td className="px-4 py-2 font-medium text-slate-800">{m.monthKey}</td>
+                          <td className="px-4 py-2 text-right tabular-nums text-slate-700">{m.dayCounts.weekday}</td>
+                          <td className="px-4 py-2 text-right tabular-nums text-slate-700">{m.dayCounts.weekend}</td>
+                          <td className="px-4 py-2 text-right tabular-nums text-slate-700">{m.dayCounts.holiday}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
+          )}
 
-            <div className="md:col-span-3">
-              {model.seasonality ? (
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <SeasonalityChart
-                    title="Observed intra-month seasonality (historical)"
-                    subtitle="Learned by distance-to-month-end (0 = last day)"
-                    mode="daysToMonthEnd"
-                    daysToMonthEndMultiplier={model.seasonality.daysToMonthEndMultiplier}
-                  />
+          {viewMode === 'month' ? (
+            <div className="mt-4 flex justify-end">
+              <div className="w-full max-w-md">
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <table className="w-full table-fixed">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Day type
+                        </th>
+                        <th className="px-4 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          So far
+                        </th>
+                        <th className="px-4 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Left
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-sm">
+                      <tr className="border-t border-slate-100">
+                        <td className="px-4 py-2 text-slate-700">Weekdays</td>
+                        <td className="px-4 py-2 text-right font-semibold text-slate-900">
+                          {model.classificationCounts.weekdaysSoFar}
+                        </td>
+                        <td className="px-4 py-2 text-right font-semibold text-slate-900">
+                          {model.classificationCounts.weekdaysRemaining}
+                        </td>
+                      </tr>
+                      <tr className="border-t border-slate-100">
+                        <td className="px-4 py-2 text-slate-700">Weekends</td>
+                        <td className="px-4 py-2 text-right font-semibold text-slate-900">
+                          {model.classificationCounts.weekendsSoFar}
+                        </td>
+                        <td className="px-4 py-2 text-right font-semibold text-slate-900">
+                          {model.classificationCounts.weekendsRemaining}
+                        </td>
+                      </tr>
+                      <tr className="border-t border-slate-100">
+                        <td className="px-4 py-2 text-slate-700">Bank holidays</td>
+                        <td className="px-4 py-2 text-right font-semibold text-slate-900">
+                          {model.classificationCounts.holidaysSoFar}
+                        </td>
+                        <td className="px-4 py-2 text-right font-semibold text-slate-900">
+                          {model.classificationCounts.holidaysRemaining}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
-              ) : (
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <div className="text-sm font-semibold text-slate-900">Observed intra-month seasonality (historical)</div>
+                <div className="mt-1 text-right text-[11px] text-slate-500">
+                  “Left” counts only cover the forecast window (tomorrow → month-end).
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {viewMode === 'month' ? (
+            <>
+              <div className="soft-divider my-6" />
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+                <div className="md:col-span-2">
+                  <div className="text-sm font-semibold text-slate-900">Seasonality adjustment</div>
                   <div className="mt-1 text-xs text-slate-500">
-                    No historical data available, so seasonality is treated as 1.00× for all days.
+                    We use historical intra-month patterns (e.g. month-end uplift) to shape how the remaining forecast is
+                    distributed across the remaining days.
+                  </div>
+
+                  <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      Formula (allocation over remaining days)
+                    </div>
+                    <div className="mt-2 font-mono text-[12px] leading-5 text-slate-700">
+                      w(d) = runRate(dayType(d)) × seasonality(daysToMonthEnd(d))
+                      <br />
+                      RemainingTotal = ForecastMonthEnd − ActualMTD
+                      <br />
+                      Forecast(d) = RemainingTotal × w(d) / Σ w(k) for all remaining days k
+                    </div>
+                    <div className="mt-2 text-[11px] text-slate-500">
+                      Where <span className="font-semibold">daysToMonthEnd(d)</span> is 0 for the last day of the month, 1
+                      for the day before, etc. Seasonality multipliers are mean normalized to 1.00×.
+                    </div>
                   </div>
                 </div>
-              )}
-            </div>
-          </div>
 
-          <div className="soft-divider my-6" />
+                <div className="md:col-span-3">
+                  {model.seasonality ? (
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <SeasonalityChart
+                        title="Observed intra-month seasonality (historical)"
+                        subtitle="Learned by distance-to-month-end (0 = last day)"
+                        mode="daysToMonthEnd"
+                        daysToMonthEndMultiplier={model.seasonality.daysToMonthEndMultiplier}
+                      />
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="text-sm font-semibold text-slate-900">
+                        Observed intra-month seasonality (historical)
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        No historical data available, so seasonality is treated as 1.00× for all days.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <ClientOutlierFlagTable
-              title="Client outlier flags (daily)"
-              subtitle="Red/green cells highlight days that materially deviate from the client’s recent trend (both negative drops and positive spikes). Hover a cell for details."
-              monthEnd={monthEnd}
-              asOfIso={model.todayIso}
-              clients={visibleClientsForTable}
-              rows={dataset.historicalDaily ? [...dataset.historicalDaily, ...dataset.daily] : dataset.daily}
-              bankHolidayDates={dataset.bankHolidayDates ?? []}
-            />
-          </div>
+              <div className="soft-divider my-6" />
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <ClientOutlierFlagTable
+                  title="Client outlier flags (daily)"
+                  subtitle="Red/green cells highlight days that materially deviate from the client’s recent trend (both negative drops and positive spikes). Hover a cell for details."
+                  monthEnd={monthEnd}
+                  asOfIso={model.todayIso}
+                  clients={visibleClientsForTable}
+                  rows={dataset.historicalDaily ? [...dataset.historicalDaily, ...dataset.daily] : dataset.daily}
+                  bankHolidayDates={dataset.bankHolidayDates ?? []}
+                />
+              </div>
+            </>
+          ) : null}
         </div>
       </main>
     </div>

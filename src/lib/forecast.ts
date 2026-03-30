@@ -38,8 +38,6 @@ export type ProjectionBreakdownRow = {
   dayType: DayType
   runRateUsed: number
   seasonalityMultiplier: number
-  weight: number
-  weightPct: number
   baselineTxns: number
   optimisticTxns: number
   conservativeTxns: number
@@ -122,18 +120,30 @@ export function computeRemainingCounts(params: {
 
 export function forecastMonthEndTotals(params: {
   actualMtd: number
+  today: Date
+  monthEnd: Date
+  bankHolidaySet: Set<string>
   runRates: RunRates
-  remaining: Pick<DayClassificationCounts, 'weekdaysRemaining' | 'weekendsRemaining' | 'holidaysRemaining'>
+  seasonality: SeasonalityProfile | null
 }): ForecastTotals {
-  const { actualMtd, runRates, remaining } = params
-  const remainingExpected =
-    remaining.weekdaysRemaining * runRates.weekday +
-    remaining.weekendsRemaining * runRates.weekend +
-    remaining.holidaysRemaining * runRates.holiday
+  const { actualMtd, today, monthEnd, bankHolidaySet, runRates, seasonality } = params
+
+  // Seasonality is a *day-position* multiplier (already de-trended by global day-type means).
+  // Day-type (weekday/weekend/holiday) level is represented by runRates; we multiply them.
+  let remainingExpected = 0
+  for (let d = addDays(today, 1); d <= monthEnd; d = addDays(d, 1)) {
+    const t = dayTypeFor(d, bankHolidaySet)
+    const rr = expectedForDay(t, runRates)
+    const dte = differenceInCalendarDays(monthEnd, d)
+    const s = seasonalityMultiplierForDaysToEnd(seasonality, dte)
+    remainingExpected += rr * s
+  }
 
   const baseline = actualMtd + remainingExpected
-  const optimistic = baseline * 1.05
-  const conservative = baseline * 0.95
+  // Scenarios should reflect ±10% on the *run-rate driven remaining* portion,
+  // not ±5% on the full month-end total (which can exaggerate differences late in month).
+  const optimistic = actualMtd + remainingExpected * 1.1
+  const conservative = actualMtd + remainingExpected * 0.9
 
   return {
     baselineTotal: Math.round(baseline),
@@ -165,7 +175,7 @@ export function buildProjectionBreakdown(params: {
   const dayTypes: DayType[] = []
   const runRateUsed: number[] = []
   const seasonals: number[] = []
-  const weights: number[] = []
+  const rawWeights: number[] = []
 
   for (let d = addDays(clampedToday, 1); d <= monthEnd; d = addDays(d, 1)) {
     const iso = toDateOnlyIso(d)
@@ -179,53 +189,47 @@ export function buildProjectionBreakdown(params: {
     dayTypes.push(t)
     runRateUsed.push(rr)
     seasonals.push(s)
-    weights.push(w)
+    rawWeights.push(w)
   }
 
-  const wSum = weights.reduce((a, b) => a + b, 0)
+  const wSum = rawWeights.reduce((a, b) => a + b, 0)
 
-  function allocate(targetTotal: number) {
-    const remainingTarget = Math.max(0, targetTotal - actualMtd)
-    const alloc = new Map<string, number>()
-    if (remainingIsos.length === 0) return { alloc, remainingTarget }
-    if (wSum <= 0) {
-      const perDay = remainingTarget / remainingIsos.length
-      for (const iso of remainingIsos) alloc.set(iso, perDay)
-      return { alloc, remainingTarget }
-    }
-    for (let i = 0; i < remainingIsos.length; i++) {
-      alloc.set(remainingIsos[i], (weights[i] / wSum) * remainingTarget)
-    }
-    return { alloc, remainingTarget }
-  }
-
-  const base = allocate(totals.baselineTotal)
-  const opt = allocate(totals.optimisticTotal)
-  const con = allocate(totals.conservativeTotal)
+  const baselineRemaining = Math.max(0, totals.baselineTotal - actualMtd)
+  const scale = wSum > 0 ? baselineRemaining / wSum : 0
+  const optScale = 1.1
+  const conScale = 0.9
 
   const rows: ProjectionBreakdownRow[] = []
   for (let i = 0; i < remainingIsos.length; i++) {
     const iso = remainingIsos[i]
-    const w = weights[i]
+    const rr = runRateUsed[i] ?? 0
+    const sRaw = seasonals[i] ?? 1
+    // After moving seasonality into the month-end totals, the baseline allocation no longer
+    // needs a global normalization factor. Keep multiplier interpretable.
+    const sEff = wSum > 0 && Number.isFinite(scale) ? sRaw * scale : sRaw
     rows.push({
       dateIso: iso,
       dayType: dayTypes[i]!,
-      runRateUsed: runRateUsed[i]!,
-      seasonalityMultiplier: seasonals[i]!,
-      weight: w,
-      weightPct: wSum > 0 ? (w / wSum) * 100 : remainingIsos.length ? 100 / remainingIsos.length : 0,
-      baselineTxns: base.alloc.get(iso) ?? 0,
-      optimisticTxns: opt.alloc.get(iso) ?? 0,
-      conservativeTxns: con.alloc.get(iso) ?? 0,
+      runRateUsed: rr,
+      // Effective multiplier so that: baselineTxns(d) = runRateUsed(d) × seasonalityMultiplier(d)
+      // and Σ baselineTxns(d) = baselineRemaining.
+      seasonalityMultiplier: sEff,
+      baselineTxns: rr * sEff,
+      optimisticTxns: rr * (sEff * optScale),
+      conservativeTxns: rr * (sEff * conScale),
     })
   }
+
+  const sumBaseline = rows.reduce((a, r) => a + r.baselineTxns, 0)
+  const sumOpt = rows.reduce((a, r) => a + r.optimisticTxns, 0)
+  const sumCon = rows.reduce((a, r) => a + r.conservativeTxns, 0)
 
   return {
     rows,
     totals: {
-      baselineRemaining: base.remainingTarget,
-      optimisticRemaining: opt.remainingTarget,
-      conservativeRemaining: con.remainingTarget,
+      baselineRemaining: sumBaseline,
+      optimisticRemaining: sumOpt,
+      conservativeRemaining: sumCon,
     },
   }
 }

@@ -1,5 +1,6 @@
 import { format } from 'date-fns'
 import {
+  Bar,
   CartesianGrid,
   Legend,
   Line,
@@ -21,6 +22,11 @@ type Row = {
   optimisticCumulative: number | null
   conservativeCumulative: number | null
   isForecast: boolean
+  runRateBar?: number | null
+  rrActual?: number | null
+  rrCon?: number | null
+  rrBaseExtra?: number | null
+  rrOptExtra?: number | null
 }
 
 function formatCompact(n: number) {
@@ -35,6 +41,7 @@ export function CumulativeForecastChart(props: {
   data: Row[]
   todayIso: string
   monthEndIso: string
+  showRunRateBars?: boolean
   latestActualBubble?: {
     dateIso: string
     mtd: number
@@ -47,6 +54,7 @@ export function CumulativeForecastChart(props: {
     conservative: number | null
   }
 }) {
+  const showRunRateBars = props.showRunRateBars ?? false
   const todayX = props.todayIso
   const monthEndX = props.monthEndIso
   const bubble = props.latestActualBubble
@@ -59,6 +67,55 @@ export function CumulativeForecastChart(props: {
     bubble?.mtdVsPrevMonthPct === null || bubble?.mtdVsPrevMonthPct === undefined
       ? null
       : `${bubble.mtdVsPrevMonthPct >= 0 ? '+' : ''}${bubble.mtdVsPrevMonthPct.toFixed(1)}% vs last month MTD`
+
+  const dataWithBars: Row[] = (() => {
+    const out: Row[] = []
+    for (let i = 0; i < props.data.length; i++) {
+      const cur = props.data[i]!
+      const prev = i > 0 ? props.data[i - 1]! : null
+      const actualDaily =
+        cur.actualCumulative !== null && prev?.actualCumulative !== null
+          ? cur.actualCumulative - (prev?.actualCumulative ?? 0)
+          : cur.actualCumulative !== null && prev?.actualCumulative === null
+            ? cur.actualCumulative
+            : null
+      const baselineDaily =
+        cur.baselineCumulative !== null && prev?.baselineCumulative !== null
+          ? cur.baselineCumulative - (prev?.baselineCumulative ?? 0)
+          : null
+      const optimisticDaily =
+        cur.optimisticCumulative !== null && prev?.optimisticCumulative !== null
+          ? cur.optimisticCumulative - (prev?.optimisticCumulative ?? 0)
+          : null
+      const conservativeDaily =
+        cur.conservativeCumulative !== null && prev?.conservativeCumulative !== null
+          ? cur.conservativeCumulative - (prev?.conservativeCumulative ?? 0)
+          : null
+
+      const v = actualDaily !== null ? actualDaily : cur.isForecast ? baselineDaily : null
+
+      // For projection window, show scenario range as stacked bars:
+      // Conservative (bottom) + (Baseline-Conservative) + (Optimistic-Baseline) => top = Optimistic.
+      const con = cur.isForecast ? (conservativeDaily ?? null) : null
+      const base = cur.isForecast ? (baselineDaily ?? null) : null
+      const opt = cur.isForecast ? (optimisticDaily ?? null) : null
+      const rrCon = con === null ? null : Math.max(0, con)
+      const rrBaseExtra =
+        base === null || con === null ? null : Math.max(0, base - con)
+      const rrOptExtra =
+        opt === null || base === null ? null : Math.max(0, opt - base)
+
+      out.push({
+        ...cur,
+        runRateBar: v !== null ? Math.max(0, v) : null,
+        rrActual: actualDaily !== null ? Math.max(0, actualDaily) : null,
+        rrCon,
+        rrBaseExtra,
+        rrOptExtra,
+      })
+    }
+    return out
+  })()
 
   return (
     <div className="w-full">
@@ -76,7 +133,7 @@ export function CumulativeForecastChart(props: {
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             key={`${props.todayIso}_${props.monthEndIso}_${props.data.length}`}
-            data={props.data}
+            data={showRunRateBars ? dataWithBars : props.data}
             // Extra right margin keeps month-end labels visible.
             margin={{ top: 10, right: 170, left: 0, bottom: 8 }}
           >
@@ -284,6 +341,19 @@ export function CumulativeForecastChart(props: {
               domain={[0, (dataMax: number) => (Number.isFinite(dataMax) ? dataMax * 1.12 : 'auto')]}
             />
 
+            {showRunRateBars ? (
+              <YAxis
+                yAxisId="rr"
+                orientation="right"
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 11, fill: '#64748b' }}
+                width={60}
+                tickFormatter={(v: number) => formatCompact(v)}
+                domain={[0, 'auto']}
+              />
+            ) : null}
+
             <Tooltip
               contentStyle={{
                 borderRadius: 14,
@@ -309,6 +379,49 @@ export function CumulativeForecastChart(props: {
                 <span style={{ color: '#334155', fontSize: 12, fontWeight: 600 }}>{value}</span>
               )}
             />
+
+            {showRunRateBars ? (
+              <Bar
+                yAxisId="rr"
+                dataKey="rrActual"
+                name="Run rate (actual)"
+                fill="#94a3b8"
+                opacity={0.30}
+                barSize={8}
+              />
+            ) : null}
+
+            {showRunRateBars ? (
+              <>
+                <Bar
+                  yAxisId="rr"
+                  dataKey="rrCon"
+                  name="Run rate (conservative)"
+                  fill="#f97316"
+                  opacity={0.20}
+                  barSize={8}
+                  stackId="rrRange"
+                />
+                <Bar
+                  yAxisId="rr"
+                  dataKey="rrBaseExtra"
+                  name="Run rate (baseline)"
+                  fill="#2563eb"
+                  opacity={0.20}
+                  barSize={8}
+                  stackId="rrRange"
+                />
+                <Bar
+                  yAxisId="rr"
+                  dataKey="rrOptExtra"
+                  name="Run rate (optimistic)"
+                  fill="#16a34a"
+                  opacity={0.20}
+                  barSize={8}
+                  stackId="rrRange"
+                />
+              </>
+            ) : null}
 
             <Line
               type="monotone"

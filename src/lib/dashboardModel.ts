@@ -55,13 +55,9 @@ export function buildDashboardModel(params: {
     bankHolidaySet,
   })
 
-  const remaining = computeRemainingCounts({ today: effectiveToday, monthEnd: monthEndD, bankHolidaySet })
-
   const actualMtd = Array.from(dailyTotals.entries())
     .filter(([iso]) => iso <= todayIso)
     .reduce((acc, [, v]) => acc + v, 0)
-
-  const totals = forecastMonthEndTotals({ actualMtd, runRates, remaining })
 
   const prevMonthEnd = endOfMonth(subMonths(monthEndD, 1))
   const prevMonthStart = startOfMonth(prevMonthEnd)
@@ -102,18 +98,31 @@ export function buildDashboardModel(params: {
 
   const mtdVsPrevMonthPct =
     prevMonthMtd && prevMonthMtd > 0 ? ((actualMtd - prevMonthMtd) / prevMonthMtd) * 100 : null
+
+  const seasonality = dataset.historicalDaily
+    ? buildSeasonalityProfile(
+        dataset.historicalDaily.filter((r) => (clientId === 'all' ? true : r.clientId === clientId)),
+        { bankHolidaySet },
+      )
+    : null
+
+  const remaining = computeRemainingCounts({ today: effectiveToday, monthEnd: monthEndD, bankHolidaySet })
+
+  const totals = forecastMonthEndTotals({
+    actualMtd,
+    today: effectiveToday,
+    monthEnd: monthEndD,
+    bankHolidaySet,
+    runRates,
+    seasonality,
+  })
+
   const baselineVsPrevMonthPct =
     prevMonthTotal && prevMonthTotal > 0 ? ((totals.baselineTotal - prevMonthTotal) / prevMonthTotal) * 100 : null
   const optimisticVsPrevMonthPct =
     prevMonthTotal && prevMonthTotal > 0 ? ((totals.optimisticTotal - prevMonthTotal) / prevMonthTotal) * 100 : null
   const conservativeVsPrevMonthPct =
     prevMonthTotal && prevMonthTotal > 0 ? ((totals.conservativeTotal - prevMonthTotal) / prevMonthTotal) * 100 : null
-
-  const seasonality = dataset.historicalDaily
-    ? buildSeasonalityProfile(
-        dataset.historicalDaily.filter((r) => (clientId === 'all' ? true : r.clientId === clientId)),
-      )
-    : null
 
   const projectionBreakdown = showScenarios
     ? buildProjectionBreakdown({

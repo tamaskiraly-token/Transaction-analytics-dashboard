@@ -1,6 +1,6 @@
 import { differenceInCalendarDays, endOfMonth, format, parseISO } from 'date-fns'
-import { parseDateOnlyIso } from './dateUtils'
-import type { DailyClientTxn } from './types'
+import { dayTypeFor, parseDateOnlyIso } from './dateUtils'
+import type { DailyClientTxn, DayType } from './types'
 
 export type SeasonalityProfile = {
   /**
@@ -25,8 +25,34 @@ function normalizeToMean1(xs: number[]): number[] {
  * Builds a very lightweight intra-month seasonality profile from historical daily totals.
  * It learns "day-of-month" multipliers (e.g., end-of-month uplift).
  */
-export function buildSeasonalityProfile(history: DailyClientTxn[]): SeasonalityProfile | null {
+export function buildSeasonalityProfile(
+  history: DailyClientTxn[],
+  params?: { bankHolidaySet?: Set<string> },
+): SeasonalityProfile | null {
   if (!history.length) return null
+  const bankHolidaySet = params?.bankHolidaySet ?? new Set<string>()
+
+  // First aggregate across clients per day for stable day-type baselines.
+  const globalDailyTotals = new Map<string, number>()
+  for (const r of history) {
+    globalDailyTotals.set(r.dateIso, (globalDailyTotals.get(r.dateIso) ?? 0) + r.txns)
+  }
+
+  // Compute a global day-type mean to remove weekday/weekend/holiday level effects.
+  // This prevents e.g. "month-end fell on Saturday" from dragging down the learned month-end seasonality.
+  const globalTypeSums: Record<DayType, number> = { weekday: 0, weekend: 0, holiday: 0 }
+  const globalTypeNs: Record<DayType, number> = { weekday: 0, weekend: 0, holiday: 0 }
+  for (const [iso, v] of globalDailyTotals) {
+    const d = parseDateOnlyIso(iso)
+    const t = dayTypeFor(d, bankHolidaySet)
+    globalTypeSums[t] += v
+    globalTypeNs[t] += 1
+  }
+  const globalTypeMeans: Record<DayType, number> = {
+    weekday: globalTypeNs.weekday ? globalTypeSums.weekday / globalTypeNs.weekday : 0,
+    weekend: globalTypeNs.weekend ? globalTypeSums.weekend / globalTypeNs.weekend : 0,
+    holiday: globalTypeNs.holiday ? globalTypeSums.holiday / globalTypeNs.holiday : 0,
+  }
 
   // Group by month, then compute each month’s average day value by DOM.
   const byMonth = new Map<string, DailyClientTxn[]>()
@@ -60,14 +86,18 @@ export function buildSeasonalityProfile(history: DailyClientTxn[]): SeasonalityP
 
     for (const [iso, v] of dailyTotals) {
       const d = parseDateOnlyIso(iso)
+      const t = dayTypeFor(d, bankHolidaySet)
+      // Remove day-type level effect first. If mean is missing, fall back to raw value.
+      const denom = globalTypeMeans[t]
+      const vAdj = denom > 0 ? v / denom : v
       const dom = Number(format(d, 'd'))
       if (dom >= 1 && dom <= dim) {
-        domTotals[dom - 1] += v
+        domTotals[dom - 1] += vAdj
         domCounts[dom - 1] += 1
       }
       const daysToEnd = differenceInCalendarDays(end, d)
       if (daysToEnd >= 0 && daysToEnd < dim) {
-        dteTotals[daysToEnd] += v
+        dteTotals[daysToEnd] += vAdj
         dteCounts[daysToEnd] += 1
       }
     }
