@@ -269,9 +269,16 @@ export function CumulativeForecastChart(props: {
               >
               const sorted = [...present].sort((a, b) => b.y - a.y)
               const offsets = new Map<string, number>()
-              // Keep labels close to endpoints and below legend area.
-              const baseOffsets = [4, 10, 16]
-              for (let i = 0; i < sorted.length; i++) offsets.set(sorted[i].key, baseOffsets[i] ?? 0)
+              // When scenario endpoints are close, fixed small offsets will overlap.
+              // Always apply pixel-based vertical separation, centered around the endpoint.
+              const minSepPx = 14
+              const n = sorted.length
+              for (let i = 0; i < n; i++) {
+                // For 3 items => [-14, 0, +14] (highest -> lowest)
+                // For 2 items => [-7, +7]
+                const dy = (i - (n - 1) / 2) * minSepPx
+                offsets.set(sorted[i].key, dy)
+              }
 
               return items
                 .filter((it) => it.y !== null)

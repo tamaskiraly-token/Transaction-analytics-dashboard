@@ -42,11 +42,6 @@ export function YearForecastChart(props: {
   const data: Row[] = (() => {
     const months = [...props.months].sort((a, b) => a.monthKey.localeCompare(b.monthKey))
     const startKey = props.projectionStart.monthKey
-    const currentKey = props.asOf.monthKey
-    const current = months.find((m) => m.monthKey === currentKey) ?? null
-    const curBaseline = current?.baselineTotal ?? null
-    const curOptimistic = current?.optimisticTotal ?? null
-    const curConservative = current?.conservativeTotal ?? null
 
     let actualCum = 0
     let baselineCum: number | null = null
@@ -110,23 +105,10 @@ export function YearForecastChart(props: {
         continue
       }
 
-      // Future months: add remainder of current month once, then full month totals.
-      const addBaseline: number =
-        baselineCum === props.projectionStart.ytd && curBaseline !== null
-          ? Math.max(0, curBaseline - props.asOf.currentMonthMtd) + (m.baselineTotal ?? 0)
-          : (m.baselineTotal ?? 0)
-      const addOptimistic: number =
-        optimisticCum === props.projectionStart.ytd && curOptimistic !== null
-          ? Math.max(0, curOptimistic - props.asOf.currentMonthMtd) + (m.optimisticTotal ?? 0)
-          : (m.optimisticTotal ?? 0)
-      const addConservative: number =
-        conservativeCum === props.projectionStart.ytd && curConservative !== null
-          ? Math.max(0, curConservative - props.asOf.currentMonthMtd) + (m.conservativeTotal ?? 0)
-          : (m.conservativeTotal ?? 0)
-
-      baselineCum = baselineCum + addBaseline
-      optimisticCum = optimisticCum + addOptimistic
-      conservativeCum = conservativeCum + addConservative
+      // Projection months: add the projected month totals (current month is included as its full projected total).
+      baselineCum = baselineCum + (m.baselineTotal ?? 0)
+      optimisticCum = optimisticCum + (m.optimisticTotal ?? 0)
+      conservativeCum = conservativeCum + (m.conservativeTotal ?? 0)
 
       rows.push({
         monthKey: m.monthKey,
